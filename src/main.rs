@@ -1,8 +1,10 @@
 use std::fs::{File, OpenOptions};
-use std::io::{BufReader, Read};
+use std::io::{BufReader, ErrorKind, Read};
+use std::process;
+
 use byteorder::{ByteOrder, LittleEndian};
+use clap::{App, Arg};
 use serde::{Deserialize, Serialize};
-use clap::{Arg, App};
 
 #[derive(Serialize, Deserialize)]
 struct Item {
@@ -116,12 +118,29 @@ fn main() {
             .help("The file name to write the data to (default: items.json)"))
         .get_matches();
 
-    let file = OpenOptions::new().read(true).open(
-        matches.value_of("file").unwrap_or("items.dat"))
-        .expect("File not found");
+    let file_name = matches.value_of("file").unwrap_or("items.dat");
+    let output_file = matches.value_of("output").unwrap_or("items.json");
+
+    let file = OpenOptions::new()
+        .read(true)
+        .open(file_name);
+    let file = match file {
+        Ok(file) => file,
+        Err(error) => match error.kind() {
+            ErrorKind::NotFound => {
+                println!("{} not found, please check file path", file_name);
+                process::exit(1);
+            },
+            _other_error => {
+                println!("Problem opening the file, do you have the correct permissions?");
+                println!("Perhaps, the file is currently in use");
+                process::exit(1);
+            }
+        }
+    };
     let mut buf_reader = BufReader::new(file);
     let file_version = LittleEndian::read_u16(&read_value(&mut buf_reader, 2));
-    println!("Items Dat version: {}", file_version);
+    println!("items.dat file version: {}", file_version);
     let item_count = LittleEndian::read_u32(&read_value(&mut buf_reader, 4));
     println!("Number of items: {}", item_count);
     let mut items: Vec<Item> = vec![];
@@ -266,7 +285,13 @@ fn main() {
         item_count,
         items,
     };
-    serde_json::to_writer_pretty(&File::create(matches.value_of("output").unwrap_or("items.json")).unwrap(), &data_file)
-        .expect("Unable to write to file, please check if you have permissions to write in this folder");
+    match serde_json::to_writer_pretty(&File::create(output_file).unwrap(), &data_file) {
+        Ok(t) => t,
+        Err(_error) => {
+            println!("Unable to write output to file");
+            println!("Please check permissions");
+            process::exit(1);
+        }
+    }
 }
 
